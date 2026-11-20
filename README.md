@@ -6,7 +6,6 @@ A World of Warcraft **Forever** addon that finds ways to make gold on the auctio
 
 1. Install Auctionator.
 2. Copy the `AuctionatorTools` folder into `World of Warcraft\_forever_\Interface\AddOns\`.
-3. Optional: install [Preserve Auctionator AH Scan](https://www.curseforge.com/wow/addons/preserve-auctionator-ah-scan) so your last scan is still available after a reload or relog.
 
 ## Use
 
