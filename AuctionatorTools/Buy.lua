@@ -44,10 +44,10 @@ local function StartTimer(seconds, message)
   end)
 end
 
-local function Describe(qty, price, profit)
+local function Describe(qty, price, profitEach)
   local verb = request.mode == "bid" and "Bid on" or "Buy"
-  return string.format("%s %dx %s for %s (profit %s)", verb, qty, request.link or request.name,
-    AT.FormatMoney(price), AT.FormatMoney(profit))
+  return string.format("%s %dx %s for %s (profit each %s)", verb, qty, request.link or request.name,
+    AT.FormatMoney(price), AT.FormatMoney(profitEach))
 end
 
 local function Exhausted()
@@ -104,10 +104,10 @@ local function ProcessItemResults(itemKey)
         price = info.buyoutAmount
       end
       local qty = info.quantity or 1
-      if price and price > 0 then
-        local profit = request.unitValue * qty - price
-        if profit >= request.minProfit then
-          table.insert(candidates, { auctionID = info.auctionID, price = price, qty = qty, profit = profit })
+      if price and price > 0 and qty > 0 then
+        local profitEach = request.unitValue - price / qty
+        if profitEach >= request.minProfit then
+          table.insert(candidates, { auctionID = info.auctionID, price = price, qty = qty, profit = profitEach })
         end
       end
     end
@@ -123,7 +123,7 @@ local function ProcessCommodityResults(itemID)
   local qty, total = 0, 0
   for index = 1, C_AuctionHouse.GetNumCommoditySearchResults(itemID) do
     local info = C_AuctionHouse.GetCommoditySearchResultInfo(itemID, index)
-    if not info or info.unitPrice >= request.unitValue then
+    if not info or info.unitPrice > request.unitValue - request.minProfit then
       break
     end
     local available = info.quantity - (info.numOwnerItems or 0)
@@ -137,13 +137,13 @@ local function ProcessCommodityResults(itemID)
       break
     end
   end
-  local profit = request.unitValue * qty - total
-  if qty == 0 or profit < request.minProfit then
+  local profitEach = qty > 0 and (request.unitValue * qty - total) / qty or 0
+  if qty == 0 or profitEach < request.minProfit then
     Exhausted()
     return
   end
-  offer = { qty = qty, price = total, profit = profit }
-  SetState("offer", Describe(qty, total, profit))
+  offer = { qty = qty, price = total, profit = profitEach }
+  SetState("offer", Describe(qty, total, profitEach))
 end
 
 local listener = {}
@@ -237,11 +237,11 @@ AT.OnEvent("COMMODITY_PRICE_UPDATED", function(unitPrice, totalPrice)
     return
   end
   StopTimer()
-  local profit = request.unitValue * offer.qty - totalPrice
-  if profit >= request.minProfit and totalPrice <= GetMoney() then
+  local profitEach = (request.unitValue * offer.qty - totalPrice) / offer.qty
+  if profitEach >= request.minProfit and totalPrice <= GetMoney() then
     offer.price = totalPrice
-    offer.profit = profit
-    SetState("commodityConfirm", "Confirm: " .. Describe(offer.qty, totalPrice, profit))
+    offer.profit = profitEach
+    SetState("commodityConfirm", "Confirm: " .. Describe(offer.qty, totalPrice, profitEach))
   else
     C_AuctionHouse.CancelCommoditiesPurchase()
     AttemptFailed("The price changed and is no longer profitable.")

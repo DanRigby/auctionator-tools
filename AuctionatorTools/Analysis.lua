@@ -30,6 +30,7 @@ local function FinishGroups(groups, approx)
       group.quality = item.quality
       group.link = group.link or item.link
       group.unit = group.cost / group.qty
+      group.profit = group.profit / group.qty
       group.approx = approx
       table.insert(rows, group)
     end
@@ -86,7 +87,7 @@ function Builders.vendor(settings)
     local price = bidMode and bid or buyout
     if price and not (bidMode and Data.IsCommodity(itemID)) then
       local item = Data.Item(itemID)
-      if item and item.sell > 0 and item.sell * count - price >= minProfit then
+      if item and item.sell > 0 and item.sell - price / count >= minProfit then
         AddListing(groups, itemID, count, price, item.sell, link)
       end
     end
@@ -99,22 +100,24 @@ function Builders.vendor(settings)
 end
 
 function Builders.deals(settings)
-  local kind, scan = Data.GetScan(false)
+  local bidMode = settings.mode == "bid"
+  local kind, scan = Data.GetScan(bidMode)
   if not scan then
-    return {}, { noData = true }
+    return {}, { noData = true, needFull = bidMode and Data.summary ~= nil }
   end
   local cut = AT.AHCut()
   local factor = 1 - settings.discount / 100
   local minProfit = settings.minProfit
   local maxBuyout = settings.maxBuyout
   local groups = {}
-  ForEachListing("deals", kind, scan, function(itemID, count, buyout, _, link)
+  ForEachListing("deals", kind, scan, function(itemID, count, buyout, bid, link)
     if buyout and buyout <= maxBuyout then
+      local price = bidMode and bid or buyout
       local market = Data.MarketPrice(itemID)
-      if market and buyout / count <= market * factor then
+      if price and market and price / count <= market * factor then
         local resale = market * cut
-        if resale * count - buyout >= minProfit then
-          AddListing(groups, itemID, count, buyout, resale, link)
+        if resale - price / count >= minProfit then
+          AddListing(groups, itemID, count, price, resale, link)
           groups[itemID].market = market
         end
       end
@@ -123,7 +126,7 @@ function Builders.deals(settings)
   local rows = FinishGroups(groups, kind == "summary")
   for _, row in ipairs(rows) do
     row.discount = 1 - row.unit / row.market
-    row.buy = { mode = "buyout", unitValue = row.value }
+    row.buy = { mode = bidMode and "bid" or "buyout", unitValue = row.value }
   end
   return rows, ScanMeta(kind, scan)
 end
@@ -154,7 +157,7 @@ function Builders.disenchant(settings)
         end
         values[itemID] = value
       end
-      if value and value * count - buyout >= minProfit then
+      if value and value - buyout / count >= minProfit then
         AddListing(groups, itemID, count, buyout, value, link)
       end
     end
@@ -211,7 +214,8 @@ function Builders.crafting(settings)
           local ah = Data.CurrentPrice(recipe.out)
           local saleUnit = math.max((ah or 0) * cut, output.sell)
           local value = saleUnit * recipe.yield
-          local profit = value - cost
+          local totalProfit = value - cost
+          local profit = totalProfit / recipe.yield
           if saleUnit > 0 and profit >= minProfit then
             table.insert(rows, {
               id = "r" .. recipeID,
@@ -225,7 +229,7 @@ function Builders.crafting(settings)
               cost = cost,
               value = value,
               profit = profit,
-              margin = cost > 0 and profit / cost or nil,
+              margin = cost > 0 and totalProfit / cost or nil,
               soldTo = (ah and ah * cut >= output.sell) and "ah" or "vendor",
               reagents = reagents,
             })
