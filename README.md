@@ -61,4 +61,3 @@ CI runs the same command.
 Push a version tag such as `v0.1.0` to run the checks and publish a GitHub Release
 with generated release notes. The attached `AuctionatorTools-<tag>-forever.zip`
 contains only the `AuctionatorTools/` folder, ready to extract into `AddOns`.
-The `-forever.zip` suffix is required for WoWUP to recognize the Forever client.
