@@ -8,31 +8,35 @@ local GetItemInfo = (C_Item and C_Item.GetItemInfo) or GetItemInfo
 local RequestLoadItem = C_Item and C_Item.RequestLoadItemDataByID
 local SUMMARY_PREFERENCE_SECONDS = 15 * 60
 local MAX_LOAD_ATTEMPTS = 3
+local ITEM_LOAD_TIMEOUT = 5
 
 -- Static item info never changes, so it is cached for the session
 local itemCache = {}
 local loadAttempts = {}
 local pendingLoads = {}
+local loadTimer, notifyTimer
+local lastProgress = 0
+local changedItems = {}
 
-Data.missingItems = 0
-
-function Data.Item(itemID)
-  local cached = itemCache[itemID]
-  if cached then
-    return cached
+local function NotifyLoaded(itemID)
+  changedItems[itemID] = true
+  -- A fixed batching window also flushes during a steady stream of arrivals.
+  if not notifyTimer then
+    notifyTimer = C_Timer.NewTimer(0.5, function()
+      notifyTimer = nil
+      local changed = changedItems
+      changedItems = {}
+      AT.Send("ItemDataLoaded", changed)
+    end)
   end
+end
+
+local function CacheItem(itemID)
   local name, link, quality, _, _, _, _, maxStack, _, icon, sellPrice, classID, subclassID = GetItemInfo(itemID)
   if not name then
-    local attempts = loadAttempts[itemID] or 0
-    if attempts < MAX_LOAD_ATTEMPTS and not pendingLoads[itemID] and RequestLoadItem then
-      loadAttempts[itemID] = attempts + 1
-      pendingLoads[itemID] = true
-      RequestLoadItem(itemID)
-    end
-    Data.missingItems = Data.missingItems + 1
     return nil
   end
-  cached = {
+  local cached = {
     id = itemID,
     name = name,
     link = link,
@@ -44,20 +48,111 @@ function Data.Item(itemID)
     maxStack = maxStack or 1,
   }
   itemCache[itemID] = cached
+  if loadAttempts[itemID] then
+    pendingLoads[itemID] = nil
+    loadAttempts[itemID] = nil
+    lastProgress = GetTime()
+    NotifyLoaded(itemID)
+  end
   return cached
 end
 
-AT.OnEvent("ITEM_DATA_LOAD_RESULT", function(itemID)
-  if pendingLoads[itemID] then
-    pendingLoads[itemID] = nil
-    AT.Debounce("itemData", 0.5, function()
-      AT.Send("ItemDataLoaded")
-    end)
+local CheckPendingLoads
+
+local function ScheduleLoadCheck()
+  if not loadTimer and next(pendingLoads) then
+    loadTimer = C_Timer.NewTimer(ITEM_LOAD_TIMEOUT, CheckPendingLoads)
   end
-end)
+end
+
+local function RequestItem(itemID)
+  if not next(pendingLoads) then
+    lastProgress = GetTime()
+  end
+  loadAttempts[itemID] = (loadAttempts[itemID] or 0) + 1
+  pendingLoads[itemID] = GetTime() + ITEM_LOAD_TIMEOUT
+  ScheduleLoadCheck()
+  if RequestLoadItem then
+    RequestLoadItem(itemID)
+  end
+end
+
+CheckPendingLoads = function()
+  loadTimer = nil
+  local now = GetTime()
+  if now - lastProgress >= ITEM_LOAD_TIMEOUT then
+    for itemID, deadline in pairs(pendingLoads) do
+      if deadline <= now then
+        CacheItem(itemID)
+      end
+    end
+    -- Bulk item requests can be queued by the client; don't retry while they
+    -- are still making progress.
+    if now - lastProgress >= ITEM_LOAD_TIMEOUT then
+      local unavailable = false
+      for itemID, deadline in pairs(pendingLoads) do
+        if deadline <= now then
+          if loadAttempts[itemID] < MAX_LOAD_ATTEMPTS then
+            RequestItem(itemID)
+          else
+            pendingLoads[itemID] = nil
+            unavailable = true
+          end
+        end
+      end
+      if unavailable then
+        AT.Send("ItemLoadStateChanged")
+      end
+    end
+  end
+  ScheduleLoadCheck()
+end
+
+function Data.Item(itemID, missingItems)
+  local cached = itemCache[itemID]
+  if cached then
+    return cached
+  end
+  if missingItems and missingItems[itemID] then
+    return nil
+  end
+  cached = CacheItem(itemID)
+  if cached then
+    return cached
+  end
+  if missingItems then
+    missingItems[itemID] = true
+  end
+  if not pendingLoads[itemID] and (loadAttempts[itemID] or 0) < MAX_LOAD_ATTEMPTS then
+    RequestItem(itemID)
+  end
+  return nil
+end
+
+function Data.ItemLoadCounts(missingItems)
+  local loading, unavailable = 0, 0
+  for itemID in pairs(missingItems or {}) do
+    if not itemCache[itemID] then
+      if pendingLoads[itemID] then
+        loading = loading + 1
+      else
+        unavailable = unavailable + 1
+      end
+    end
+  end
+  return loading, unavailable
+end
+
+local function OnItemLoadResult(itemID, success)
+  if success ~= false and loadAttempts[itemID] then
+    CacheItem(itemID)
+  end
+end
+AT.OnEvent("ITEM_DATA_LOAD_RESULT", OnItemLoadResult)
+AT.OnEvent("GET_ITEM_INFO_RECEIVED", OnItemLoadResult)
 
 local commodityCache = {}
-function Data.IsCommodity(itemID)
+function Data.IsCommodity(itemID, missingItems)
   local cached = commodityCache[itemID]
   if cached ~= nil then
     return cached
@@ -72,7 +167,7 @@ function Data.IsCommodity(itemID)
     end
   end
   if result == nil then
-    local item = Data.Item(itemID)
+    local item = Data.Item(itemID, missingItems)
     if not item then
       return false
     end

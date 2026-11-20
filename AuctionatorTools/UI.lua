@@ -65,8 +65,9 @@ local frame
 local widgets = {}
 local results = {}
 local dirty = { vendor = true, deals = true, disenchant = true, crafting = true, resale = true }
-local computing
+local computing, computingItems
 local computeToken = 0
+local itemRefreshToken
 local display = {}
 local offset = 0
 local selectedID
@@ -284,11 +285,43 @@ local function RefreshDisplay()
   UpdateButtons()
 end
 
-local function Recompute()
+local Recompute
+
+local function ScheduleRecompute(itemDataOnly)
+  local token = computeToken
+  if itemDataOnly then
+    if itemRefreshToken == token then
+      return
+    end
+    itemRefreshToken = token
+  end
+  AT.Debounce(itemDataOnly and "itemRecompute" or "recompute", itemDataOnly and 2 or 0.2, function()
+    if itemDataOnly then
+      itemRefreshToken = nil
+    end
+    if token == computeToken then
+      Recompute()
+    end
+  end)
+end
+
+local function CancelComputation()
+  AT.CancelJob("analysis")
+  computeToken = computeToken + 1
+  if computing then
+    dirty[computing] = true
+    computing, computingItems = nil, nil
+  end
+end
+
+Recompute = function()
   if not frame or not frame:IsShown() then
     return
   end
   local view = ActiveView()
+  if not dirty[view] and (computing == view or results[view]) then
+    return
+  end
   if computing and computing ~= view then
     dirty[computing] = true
   end
@@ -301,29 +334,28 @@ local function Recompute()
   else
     UpdateStatus()
   end
-  Analysis.Run(view, function(rows, meta)
+  computingItems = Analysis.Run(view, function(rows, meta)
     if token ~= computeToken then
       return
     end
-    computing = nil
+    computing, computingItems = nil, nil
     results[view] = { rows = rows, meta = meta }
     if view == ActiveView() then
       RefreshDisplay()
+      if dirty[view] then
+        ScheduleRecompute(true)
+      end
     end
   end)
 end
 
-local function MarkDirty(views)
+local function MarkDirty(views, itemDataOnly)
   for view in pairs(views) do
     dirty[view] = true
   end
-  if frame and frame:IsShown() and dirty[ActiveView()] then
-    AT.Debounce("recompute", 0.2, Recompute)
+  if frame and frame:IsShown() and views[ActiveView()] then
+    ScheduleRecompute(itemDataOnly)
   end
-end
-
-local function MarkAllDirty()
-  MarkDirty(dirty)
 end
 
 local function SelectedRow()
@@ -435,8 +467,12 @@ UpdateStatus = function()
     table.insert(parts, "Calculating...")
   elseif results[view] then
     table.insert(parts, #display .. " results")
-    if (results[view].meta.missingItems or 0) > 0 then
-      table.insert(parts, "loading item info...")
+    local loading, unavailable = Data.ItemLoadCounts(results[view].meta.missingItems)
+    if loading > 0 then
+      table.insert(parts, "loading item info... (" .. loading .. ")")
+    end
+    if unavailable > 0 then
+      table.insert(parts, "item info unavailable (" .. unavailable .. ")")
     end
   end
   widgets.status:SetText(table.concat(parts, "  |cff808080|||r  "))
@@ -665,6 +701,9 @@ end
 local function SelectView(view)
   if view == ActiveView() and results[view] then
     return
+  end
+  if computing and computing ~= view then
+    CancelComputation()
   end
   AT.db.activeView = view
   selectedID = nil
@@ -971,11 +1010,7 @@ local function Create()
       ticker:Cancel()
       ticker = nil
     end
-    AT.CancelJob("analysis")
-    if computing then
-      computing = nil
-      dirty[ActiveView()] = true
-    end
+    CancelComputation()
   end)
   RestorePosition()
 end
@@ -1021,7 +1056,31 @@ end)
 AT.Listen("ProfessionsUpdated", function()
   MarkDirty({ crafting = true })
 end)
-AT.Listen("ItemDataLoaded", MarkAllDirty)
+AT.Listen("ItemDataLoaded", function(itemIDs)
+  local views = {}
+  for view in pairs(dirty) do
+    local missing = results[view] and results[view].meta.missingItems
+    if computing == view then
+      missing = computingItems
+    end
+    for itemID in pairs(missing or {}) do
+      if itemIDs[itemID] then
+        if computing == view then
+          dirty[view] = true
+        else
+          views[view] = true
+        end
+        break
+      end
+    end
+  end
+  MarkDirty(views, true)
+end)
+AT.Listen("ItemLoadStateChanged", function()
+  if frame and frame:IsShown() then
+    UpdateStatus()
+  end
+end)
 AT.Listen("BuyStateChanged", function()
   if frame and frame:IsShown() then
     UpdateStatus()
