@@ -24,7 +24,7 @@ local COLUMNS = {
     { key = "unit", title = "Price Each", width = 115, format = "money" },
     { key = "value", title = "Vendor Each", width = 115, format = "money" },
     { key = "cost", title = "Total Cost", width = 115, format = "money" },
-    { key = "profit", title = "Profit", width = 115, format = "money" },
+    { key = "profit", title = "Profit Each", width = 115, format = "money" },
   },
   deals = {
     { key = "name", title = "Item" },
@@ -33,7 +33,7 @@ local COLUMNS = {
     { key = "market", title = "Typical", width = 115, format = "money" },
     { key = "discount", title = "Below", width = 60, format = "percent" },
     { key = "cost", title = "Total Cost", width = 115, format = "money" },
-    { key = "profit", title = "Profit", width = 115, format = "money" },
+    { key = "profit", title = "Profit Each", width = 115, format = "money" },
   },
   disenchant = {
     { key = "name", title = "Item" },
@@ -41,14 +41,14 @@ local COLUMNS = {
     { key = "unit", title = "Price Each", width = 115, format = "money" },
     { key = "value", title = "DE Value", width = 115, format = "money" },
     { key = "cost", title = "Total Cost", width = 115, format = "money" },
-    { key = "profit", title = "Profit", width = 115, format = "money" },
+    { key = "profit", title = "Profit Each", width = 115, format = "money" },
   },
   crafting = {
     { key = "name", title = "Crafts" },
     { key = "profession", title = "Profession", width = 110 },
     { key = "cost", title = "Materials", width = 115, format = "money" },
     { key = "value", title = "Sells For", width = 115, format = "money" },
-    { key = "profit", title = "Profit", width = 115, format = "money" },
+    { key = "profit", title = "Profit Each", width = 115, format = "money" },
     { key = "margin", title = "Margin", width = 65, format = "percent" },
   },
   resale = {
@@ -424,7 +424,7 @@ UpdateStatus = function()
   end
   local view = ActiveView()
   if Analysis.scanViews[view] then
-    local kind, scan = Data.GetScan(view == "vendor" and Settings().mode == "bid")
+    local kind, scan = Data.GetScan((view == "vendor" or view == "deals") and Settings().mode == "bid")
     if scan then
       table.insert(parts, (kind == "full" and "Full scan " or "Summary scan ") .. Data.FormatAge(scan.time))
     end
@@ -464,7 +464,7 @@ UpdateButtons = function()
       buyButton:SetText("Shop Mats")
     elseif view == "resale" then
       buyButton:Hide()
-    elseif view == "vendor" and Settings().mode == "bid" then
+    elseif (view == "vendor" or view == "deals") and Settings().mode == "bid" then
       buyButton:SetText("Bid")
     else
       buyButton:SetText("Buy")
@@ -640,7 +640,7 @@ local function UpdateFilters()
   local view = ActiveView()
   local settings = Settings()
   widgets.minProfit:SetText(AT.FormatMoneyPlain(settings.minProfit))
-  widgets.mode:SetShown(view == "vendor")
+  widgets.mode:SetShown(view == "vendor" or view == "deals")
   widgets.mode:SetText(settings.mode == "bid" and "Using: Bids" or "Using: Buyouts")
   widgets.discount:SetShown(view == "deals")
   widgets.discount.label:SetShown(view == "deals")
@@ -733,7 +733,7 @@ local function CreateFilters(parent)
   minProfit:SetScript("OnEnter", function(self)
     GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
     GameTooltip:SetText("Minimum profit")
-    GameTooltip:AddLine("Hide anything that makes less than this. Examples: 1c, 50s, 1g 25s. A plain number is copper.", 1, 1, 1, true)
+    GameTooltip:AddLine("Hide anything that makes less than this per item. Examples: 1c, 50s, 1g 25s. A plain number is copper.", 1, 1, 1, true)
     GameTooltip:Show()
   end)
   minProfit:SetScript("OnLeave", GameTooltip_Hide)
@@ -741,18 +741,19 @@ local function CreateFilters(parent)
 
   local mode = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
   mode:SetSize(120, 22)
-  mode:SetPoint("LEFT", minProfit, "RIGHT", 16, 0)
+  mode:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -MARGIN, -30)
   mode:SetScript("OnClick", function()
+    local view = ActiveView()
     local settings = Settings()
     settings.mode = settings.mode == "bid" and "buyout" or "bid"
     UpdateFilters()
-    MarkDirty({ vendor = true })
+    MarkDirty({ [view] = true })
     RefreshDisplay()
   end)
   mode:SetScript("OnEnter", function(self)
     GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
     GameTooltip:SetText("Buyouts or bids")
-    GameTooltip:AddLine("Compare the vendor price with each listing's buyout, or with the next bid you would need to place. Bids need a full scan.", 1, 1, 1, true)
+    GameTooltip:AddLine("Compare using each listing's buyout or the next bid you would need to place. Bids need a full scan.", 1, 1, 1, true)
     GameTooltip:Show()
   end)
   mode:SetScript("OnLeave", GameTooltip_Hide)
