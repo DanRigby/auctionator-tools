@@ -14,11 +14,18 @@ end
 local function widget()
   local w = {}
   function w:SetText(text) self.text = text end
+  function w:GetText() return self.text end
+  function w:SetScript(event, callback) self[event] = callback end
+  function w:HookScript(event, callback) self[event] = callback end
+  function w:CreateFontString() return widget() end
+  function w:SetAutoFocus() end
+  function w:SetNumeric() end
+  function w:SetMaxLetters() end
   function w:IsShown() return self.shown end
   function w:Show() self.shown = true end
   function w:Hide() self.shown = false end
   function w:SetShown(shown) self.shown = shown end
-  function w:SetEnabled() end
+  function w:SetEnabled(enabled) self.enabled = enabled end
   function w:Enable() end
   function w:Disable() end
   function w:SetMinMaxValues() end
@@ -29,6 +36,7 @@ local function widget()
   return w
 end
 function wipe(t) for key in pairs(t) do t[key] = nil end end
+function CreateFrame() return widget() end
 
 local function harness()
   local h = { runs = {}, pending = {}, loaded = {}, listeners = {}, timers = {}, now = 0 }
@@ -37,7 +45,7 @@ local function harness()
     ahOpen = true,
     db = { activeView = "vendor", views = {} },
     Data = {},
-    Buy = { state = "idle" },
+    Buy = { state = "idle", exhausted = {} },
     Analysis = { scanViews = { vendor = true, deals = true, disenchant = true } },
   }
   for _, view in ipairs({ "vendor", "deals", "disenchant", "crafting", "resale" }) do
@@ -79,9 +87,9 @@ local function harness()
     end
     h.now = target
   end
-  function h.finish(index)
+  function h.finish(index, rows, meta)
     local job = h.runs[index]
-    job.done({}, { missingItems = job.missing })
+    job.done(rows or {}, meta or { missingItems = job.missing })
   end
   assert(loadfile("AuctionatorTools/UI.lua"))("AuctionatorTools", AT)
   local create = upvalue(AT.UI.Show, "Create")
@@ -107,6 +115,16 @@ local function harness()
   h.results = upvalue(h.recompute, "results")
   h.select = upvalue(upvalue(create, "CreateTabs"), "SelectView")
   h.markDirty = upvalue(h.listeners.ScanUpdated, "MarkDirty")
+  h.createFilters = upvalue(create, "CreateFilters")
+  h.display = upvalue(upvalue(create, "RefreshDisplay"), "display")
+  local columns = upvalue(upvalue(create, "LayoutColumns"), "COLUMNS")
+  function h.toggle()
+    h.createFilters(frame)
+    for i, column in ipairs(columns[AT.db.activeView]) do
+      h.widgets.headers[i].column = column
+    end
+    h.widgets.mode.OnClick()
+  end
   h.frame, h.AT = frame, AT
   return h
 end
@@ -204,5 +222,47 @@ h.cancel()
 h.frame.shown = true
 h.select("vendor")
 assert(#h.runs == 2, "returning to the canceled view must rebuild it")
+
+for _, view in ipairs({ "vendor", "deals" }) do
+  h = harness()
+  h.AT.db.activeView = view
+  h.recompute()
+  local oldRows = { { id = 1, name = "Item", unit = 100, cost = 200, profit = 50 } }
+  h.finish(1, oldRows)
+  h.AT.Buy.exhausted[view] = { [2] = true }
+  h.markDirty({ [view] = true })
+  h.advance(0.2)
+  h.toggle()
+  assert(h.AT.db.views[view].mode == "bid" and #h.runs == 3,
+    "the toggle must start bid analysis immediately")
+  assert(h.runs[2].cancelled and h.results[view] == nil and #h.display == 0,
+    "switching modes must cancel old work and hide stale buyout prices")
+  assert(h.AT.Buy.exhausted[view] == nil, "buyout exhaustion must not hide bid opportunities")
+  assert(h.widgets.buy.text == "Bid" and not h.widgets.buy.enabled,
+    "bids must remain unavailable until bid results arrive")
+  assert(h.widgets.headers[3].label.text == "Bid Each", "price headers must identify bid mode")
+  h.finish(2, oldRows)
+  assert(#h.display == 0, "a canceled buyout analysis must not republish buyout prices")
+  local bidRows = { { id = 1, name = "Item", unit = 60, cost = 120, profit = 90 } }
+  h.finish(3, bidRows)
+  assert(h.display[1] == bidRows[1], "bid results must replace buyout results")
+  h.toggle()
+  assert(h.AT.db.views[view].mode == "buyout" and #h.runs == 4 and #h.display == 0,
+    "switching back must rebuild buyout prices, not reuse bid results")
+  assert(h.widgets.headers[3].label.text == "Buyout Each", "price headers must identify buyout mode")
+  h.finish(4, oldRows)
+  h.AT.Buy.state = "offer"
+  h.toggle()
+  assert(h.AT.db.views[view].mode == "buyout" and #h.runs == 4,
+    "a pending confirmation must not be relabeled as a different purchase mode")
+end
+
+h = harness()
+h.recompute()
+h.finish(1, { { id = 1, name = "Summary item", profit = 10 } })
+h.toggle()
+h.finish(2, {}, { noData = true, needFull = true })
+assert(#h.display == 0 and h.widgets.empty.text:find("Bid mode needs a full scan", 1, true),
+  "summary-only bid mode must show the full-scan requirement instead of old buyouts")
 
 print("List refresh tests passed")
