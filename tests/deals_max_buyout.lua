@@ -127,6 +127,30 @@ assert(AT.needFull and #noRows == 0 and meta.needFull,
 AT.db.views.deals.mode = "buyout"
 
 scan = { kind = "full", rows = {
+  fullListing(20, 2, 100, 40, 10),
+  fullListing(20, 2, 80),
+} }
+for _, view in ipairs({ "vendor", "deals" }) do
+  AT.db.views[view].mode = "buyout"
+  local buyoutRow = run(view)[20]
+  assert(buyoutRow.unit == 45 and buyoutRow.cost == 180,
+    "buyout mode must average buyout prices across stacks")
+  AT.db.views[view].mode = "bid"
+  local bidRow = run(view)[20]
+  local saleValue = view == "deals" and 950 or 1000
+  assert(bidRow.unit == 25 and bidRow.cost == 100 and bidRow.profit == saleValue - 25,
+    "bid mode must use starting bids and next-bid increments for cost and profit")
+  assert(buyoutRow.profit == saleValue - 45 and bidRow.profit - buyoutRow.profit == 20,
+    "sale value must stay unchanged when comparing bid and buyout profit")
+  if view == "deals" then
+    assert(bidRow.discount == 0.975 and buyoutRow.discount == 0.955,
+      "Deals discounts must use the selected acquisition price")
+  end
+  AT.db.views[view].mode = "buyout"
+  assert(run(view)[20].profit == buyoutRow.profit, "switching back must restore buyout profit")
+end
+
+scan = { kind = "full", rows = {
   fullListing(10, 2, 100),
   fullListing(10, 2, 200),
   fullListing(11, 10, 6000),

@@ -218,13 +218,22 @@ end
 
 local function UpdateHeaders()
   local settings = Settings()
+  local view = ActiveView()
   for _, header in ipairs(widgets.headers) do
     if header.column then
+      local title = header.column.title
+      if view == "vendor" or view == "deals" then
+        if header.column.key == "unit" then
+          title = settings.mode == "bid" and "Bid Each" or "Buyout Each"
+        elseif header.column.key == "cost" then
+          title = settings.mode == "bid" and "Total Bid" or "Total Buyout"
+        end
+      end
       local arrow = ""
       if header.column.key == settings.sortKey then
         arrow = settings.sortAsc and " ^" or " v"
       end
-      header.label:SetText(header.column.title .. arrow)
+      header.label:SetText(title .. arrow)
     end
   end
 end
@@ -487,6 +496,7 @@ UpdateButtons = function()
   local state = Buy.state
   local row = SelectedRow()
   local buyButton, skipButton = widgets.buy, widgets.skip
+  widgets.mode:SetEnabled(state == "idle")
   buyButton:Show()
   if state == "offer" then
     buyButton:SetText(Buy.mode == "bid" and "Confirm Bid" or "Confirm Buy")
@@ -792,11 +802,20 @@ local function CreateFilters(parent)
   mode:SetSize(120, 22)
   mode:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -MARGIN, -30)
   mode:SetScript("OnClick", function()
+    if Buy.state ~= "idle" then
+      return
+    end
     local view = ActiveView()
     local settings = Settings()
     settings.mode = settings.mode == "bid" and "buyout" or "bid"
+    CancelComputation()
+    results[view] = nil
+    Buy.exhausted[view] = nil
+    selectedID = nil
+    offset = 0
+    dirty[view] = true
     UpdateFilters()
-    MarkDirty({ [view] = true })
+    Recompute()
     RefreshDisplay()
   end)
   mode:SetScript("OnEnter", function(self)
