@@ -1,0 +1,20 @@
+## Interface: 16001
+## Title: Auctionator Tools
+## Notes: Finds auction house profit opportunities using Auctionator's scan data.
+## Author: DanRigby
+## Version: 0.1.0
+## Dependencies: Auctionator
+## OptionalDeps: PreserveAuctionatorAHScan
+## SavedVariables: AUCTIONATOR_TOOLS_DB
+## SavedVariablesPerCharacter: AUCTIONATOR_TOOLS_CHAR
+## IconTexture: Interface\Icons\INV_Misc_Coin_02
+## AddonCompartmentFunc: AuctionatorTools_OnAddonCompartmentClick
+## Category-enUS: Auctions
+
+Core.lua
+Data.lua
+Merchant.lua
+Professions.lua
+Analysis.lua
+Buy.lua
+UI.lua
