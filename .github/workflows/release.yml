@@ -1,0 +1,37 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Lua 5.1
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lua5.1
+      - name: Check Lua syntax and run tests
+        run: make check
+      - name: Package addon
+        env:
+          TAG: ${{ github.ref_name }}
+        run: zip -r "AuctionatorTools-${TAG}-forever.zip" AuctionatorTools/
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" \
+            "AuctionatorTools-${TAG}-forever.zip" \
+            --verify-tag \
+            --title "$TAG" \
+            --generate-notes
