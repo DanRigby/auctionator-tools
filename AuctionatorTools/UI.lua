@@ -400,6 +400,8 @@ local function StartBuy(row)
       mode = row.buy.mode,
       unitValue = row.buy.unitValue,
       minProfit = Settings().minProfit,
+      maxBuyout = view == "deals" and Settings().maxBuyout or nil,
+      maxUnitPrice = view == "deals" and row.market * (1 - Settings().discount / 100) or nil,
     })
   end
 end

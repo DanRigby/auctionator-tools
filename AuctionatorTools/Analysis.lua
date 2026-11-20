@@ -84,7 +84,8 @@ function Builders.vendor(settings)
   local minProfit = settings.minProfit
   local groups = {}
   ForEachListing("vendor", kind, scan, function(itemID, count, buyout, bid, link)
-    local price = bidMode and bid or buyout
+    local price = buyout
+    if bidMode then price = bid end
     if price and not (bidMode and Data.IsCommodity(itemID)) then
       local item = Data.Item(itemID)
       if item and item.sell > 0 and item.sell - price / count >= minProfit then
@@ -111,8 +112,9 @@ function Builders.deals(settings)
   local maxBuyout = settings.maxBuyout
   local groups = {}
   ForEachListing("deals", kind, scan, function(itemID, count, buyout, bid, link)
-    if buyout and buyout <= maxBuyout then
-      local price = bidMode and bid or buyout
+    if buyout and buyout <= maxBuyout and not (bidMode and Data.IsCommodity(itemID)) then
+      local price = buyout
+      if bidMode then price = bid end
       local market = Data.MarketPrice(itemID)
       if price and market and price / count <= market * factor then
         local resale = market * cut

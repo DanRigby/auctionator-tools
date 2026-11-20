@@ -45,6 +45,7 @@ AT.Data = {
   MarketPrice = function() return 1000 end,
   Item = function(id) return { name = tostring(id), sell = 1000, classID = 4, quality = 2 } end,
   DisenchantValue = function() return 1000 end,
+  IsCommodity = function(id) return id == 13 end,
   CurrentPrice = function(id)
     if id == 50 then return 0 end
     return id == 51 and 6000 or 1000
@@ -110,6 +111,14 @@ local bidRows = run("deals")
 assert(AT.needFull, "bid mode must request a full scan")
 assert(bidRows[7] and bidRows[7].cost == 110 and bidRows[7].buy.mode == "bid",
   "Deals bid mode must price and buy at the next bid")
+local highestBidder = fullListing(12, 1, 100)
+highestBidder.replicateInfo[12] = true
+scan = { kind = "full", rows = { highestBidder, fullListing(13, 1, 100) } }
+assert(not run("deals")[12], "Deals must not substitute a buyout when the player is the highest bidder")
+assert(not run("deals")[13], "Deals must not offer bids on commodities")
+AT.db.views.vendor.mode = "bid"
+assert(not run("vendor")[12], "Below Vendor must not substitute a buyout for an unavailable bid")
+AT.db.views.vendor.mode = "buyout"
 scan = { kind = "summary", rows = { { itemKey = { itemID = 8 }, minPrice = 100 } } }
 local noRows, meta
 AT.Analysis.Run("deals", function(rows, resultMeta) noRows, meta = rows, resultMeta end)
@@ -158,6 +167,17 @@ local function upvalue(fn, wanted)
   error("missing upvalue: " .. wanted)
 end
 local create = upvalue(AT.UI.Show, "Create")
+local createRow = upvalue(upvalue(create, "CreateList"), "CreateRow")
+local startBuy = upvalue(createRow, "StartBuy")
+local buyRequest
+AT.Buy.Start = function(request) buyRequest = request end
+AT.db.activeView = "deals"
+AT.db.views.deals.discount = 40
+AT.db.views.deals.maxBuyout = 100
+startBuy({ itemID = 7, name = "Item", market = 1000, buy = { mode = "buyout", unitValue = 950 } })
+assert(buyRequest.maxBuyout == 100 and buyRequest.maxUnitPrice == 600,
+  "Deals must pass its buyout and discount limits to live searches")
+AT.db.views.deals.maxBuyout = 101
 local createFilters = upvalue(create, "CreateFilters")
 local widgets = upvalue(createFilters, "widgets")
 createFilters(CreateFrame())
