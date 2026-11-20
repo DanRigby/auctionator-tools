@@ -8,13 +8,41 @@ local GetItemInfo = (C_Item and C_Item.GetItemInfo) or GetItemInfo
 local RequestLoadItem = C_Item and C_Item.RequestLoadItemDataByID
 local SUMMARY_PREFERENCE_SECONDS = 15 * 60
 local MAX_LOAD_ATTEMPTS = 3
+local ITEM_LOAD_TIMEOUT = 5
 
 -- Static item info never changes, so it is cached for the session
 local itemCache = {}
 local loadAttempts = {}
 local pendingLoads = {}
+local checkingLoads = false
 
-Data.missingItems = 0
+Data.loadingItems = false
+Data.unavailableItems = false
+
+local function NotifyItemDataChanged()
+  AT.Debounce("itemData", 0.5, function()
+    AT.Send("ItemDataLoaded")
+  end)
+end
+
+-- One timeout check for the whole batch, even for scans with thousands of items.
+local function CheckPendingLoads()
+  local now = GetTime()
+  local expired = false
+  for itemID, deadline in pairs(pendingLoads) do
+    if now >= deadline then
+      pendingLoads[itemID] = nil
+      expired = true
+    end
+  end
+  if expired then
+    NotifyItemDataChanged()
+  end
+  checkingLoads = next(pendingLoads) ~= nil
+  if checkingLoads then
+    C_Timer.After(ITEM_LOAD_TIMEOUT, CheckPendingLoads)
+  end
+end
 
 function Data.Item(itemID)
   local cached = itemCache[itemID]
@@ -24,12 +52,22 @@ function Data.Item(itemID)
   local name, link, quality, _, _, _, _, maxStack, _, icon, sellPrice, classID, subclassID = GetItemInfo(itemID)
   if not name then
     local attempts = loadAttempts[itemID] or 0
-    if attempts < MAX_LOAD_ATTEMPTS and not pendingLoads[itemID] and RequestLoadItem then
+    if attempts < MAX_LOAD_ATTEMPTS and not pendingLoads[itemID] then
       loadAttempts[itemID] = attempts + 1
-      pendingLoads[itemID] = true
-      RequestLoadItem(itemID)
+      pendingLoads[itemID] = GetTime() + ITEM_LOAD_TIMEOUT
+      if not checkingLoads then
+        checkingLoads = true
+        C_Timer.After(ITEM_LOAD_TIMEOUT, CheckPendingLoads)
+      end
+      if RequestLoadItem then
+        RequestLoadItem(itemID)
+      end
     end
-    Data.missingItems = Data.missingItems + 1
+    if pendingLoads[itemID] then
+      Data.loadingItems = true
+    else
+      Data.unavailableItems = true
+    end
     return nil
   end
   cached = {
@@ -44,17 +82,18 @@ function Data.Item(itemID)
     maxStack = maxStack or 1,
   }
   itemCache[itemID] = cached
+  loadAttempts[itemID] = nil
   return cached
 end
 
-AT.OnEvent("ITEM_DATA_LOAD_RESULT", function(itemID)
-  if pendingLoads[itemID] then
+local function OnItemLoadResult(itemID, success)
+  if pendingLoads[itemID] or (success and loadAttempts[itemID]) then
     pendingLoads[itemID] = nil
-    AT.Debounce("itemData", 0.5, function()
-      AT.Send("ItemDataLoaded")
-    end)
+    NotifyItemDataChanged()
   end
-end)
+end
+AT.OnEvent("ITEM_DATA_LOAD_RESULT", OnItemLoadResult)
+AT.OnEvent("GET_ITEM_INFO_RECEIVED", OnItemLoadResult)
 
 local commodityCache = {}
 function Data.IsCommodity(itemID)

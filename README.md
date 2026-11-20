@@ -41,3 +41,4 @@ Right-click a row, or use **Search in Auctionator**, to open the item in Auction
 
 - The addon only does work while its window is open, and only for the view you're looking at. Large scans are processed in small chunks so the game doesn't stutter.
 - Summary-scan results only know the cheapest listing of each item, so quantities show as `1+`. Run a full scan for exact numbers.
+- If some item info is unavailable after retries, the view shows the results it could calculate and skips the affected items.

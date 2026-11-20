@@ -433,8 +433,10 @@ UpdateStatus = function()
     table.insert(parts, "Calculating...")
   elseif results[view] then
     table.insert(parts, #display .. " results")
-    if (results[view].meta.missingItems or 0) > 0 then
+    if results[view].meta.loadingItems then
       table.insert(parts, "loading item info...")
+    elseif results[view].meta.unavailableItems then
+      table.insert(parts, "some item info unavailable")
     end
   end
   widgets.status:SetText(table.concat(parts, "  |cff808080|||r  "))
