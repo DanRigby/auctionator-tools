@@ -44,3 +44,11 @@ Right-click a row, or use **Search in Auctionator**, to open the item in Auction
 
 - The addon only does work while its window is open, and only for the view you're looking at. Large scans are processed in small chunks so the game doesn't stutter.
 - Summary-scan results only know the cheapest listing of each item, so quantities show as `1+`. Run a full scan for exact numbers.
+
+## Development
+
+Run the tests from the repository root with Lua 5.1:
+
+```sh
+for file in tests/*.lua; do lua5.1 "$file" || exit 1; done
+```
