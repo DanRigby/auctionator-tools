@@ -106,9 +106,10 @@ function Builders.deals(settings)
   local cut = AT.AHCut()
   local factor = 1 - settings.discount / 100
   local minProfit = settings.minProfit
+  local maxBuyout = settings.maxBuyout
   local groups = {}
   ForEachListing("deals", kind, scan, function(itemID, count, buyout, _, link)
-    if buyout then
+    if buyout and buyout <= maxBuyout then
       local market = Data.MarketPrice(itemID)
       if market and buyout / count <= market * factor then
         local resale = market * cut

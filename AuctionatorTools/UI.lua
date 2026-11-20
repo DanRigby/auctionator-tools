@@ -644,8 +644,11 @@ local function UpdateFilters()
   widgets.mode:SetText(settings.mode == "bid" and "Using: Bids" or "Using: Buyouts")
   widgets.discount:SetShown(view == "deals")
   widgets.discount.label:SetShown(view == "deals")
+  widgets.maxBuyout:SetShown(view == "deals")
+  widgets.maxBuyout.label:SetShown(view == "deals")
   if view == "deals" then
     widgets.discount:SetText(tostring(settings.discount))
+    widgets.maxBuyout:SetText(AT.FormatMoneyPlain(settings.maxBuyout))
   end
 end
 
@@ -755,8 +758,28 @@ local function CreateFilters(parent)
   mode:SetScript("OnLeave", GameTooltip_Hide)
   widgets.mode = mode
 
+  local maxBuyout = CreateInput(parent, 90, "Max buyout")
+  maxBuyout.label:SetPoint("LEFT", minProfit, "RIGHT", 16, 0)
+  maxBuyout:SetScript("OnEditFocusLost", function(self)
+    local settings = AT.db.views.deals
+    local value = AT.ParseMoney(self:GetText())
+    if value and value ~= settings.maxBuyout then
+      settings.maxBuyout = value
+      MarkDirty({ deals = true })
+    end
+    self:SetText(AT.FormatMoneyPlain(settings.maxBuyout))
+  end)
+  maxBuyout:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+    GameTooltip:SetText("Maximum buyout")
+    GameTooltip:AddLine("Only show listings with a total buyout at or below this amount. Summary scans use the price per item. Examples: 5g, 50s, or a plain number of copper.", 1, 1, 1, true)
+    GameTooltip:Show()
+  end)
+  maxBuyout:SetScript("OnLeave", GameTooltip_Hide)
+  widgets.maxBuyout = maxBuyout
+
   local discount = CreateInput(parent, 40, "At least % below typical")
-  discount.label:SetPoint("LEFT", minProfit, "RIGHT", 16, 0)
+  discount.label:SetPoint("LEFT", maxBuyout, "RIGHT", 16, 0)
   discount:SetNumeric(true)
   discount:SetMaxLetters(2)
   discount:SetScript("OnEditFocusLost", function(self)
