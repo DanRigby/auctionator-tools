@@ -145,6 +145,28 @@ for _, view in ipairs({ "vendor", "deals", "disenchant" }) do
   assert(#found == 3, view .. " must recover late-loading rows")
 end
 
+h = harness()
+local missing = {}
+h.AT.Data.Item(1, missing)
+h.advance(16)
+h.counts(missing, 0, 1)
+h.available[1] = true
+h.advance(30.5)
+h.counts(missing, 0, 0)
+assert(h.requests[1] == 3 and h.count("ItemDataLoaded") == 1,
+  "silent metadata arriving after retry exhaustion must be discovered without another request")
+
+h = harness()
+missing = {}
+for id = 1000, 1069 do h.AT.Data.Item(id, missing) end
+h.advance(20)
+h.counts(missing, 0, 70)
+h.available[1069] = true
+h.advance(31)
+h.counts(missing, 0, 69)
+assert(h.count("ItemDataLoaded") == 1 and h.maxTimerReads <= 64,
+  "exhausted-item recovery must probe large backlogs in bounded batches")
+
 for _, view in ipairs({ "crafting", "resale" }) do
   local h = harness()
   h.AT.db.views[view] = { minProfit = 1 }

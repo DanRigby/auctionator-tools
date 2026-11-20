@@ -12,16 +12,20 @@ local ITEM_LOAD_TIMEOUT = 5
 local MAX_PROGRESS_GRACE = 60
 local LOAD_BATCH_SIZE = 64
 local LOAD_BATCH_DELAY = 0.05
+local RECOVERY_INTERVAL = 30
 
 -- Static item info never changes, so it is cached for the session
 local itemCache = {}
 local loadAttempts = {}
 local pendingLoads = {}
 local loadQueue, queueHead, queueTail = {}, 1, 0
-local loadTimer, notifyTimer, stateTimer
+local exhaustedItems = {}
+local recoveryItems, recoveryBatch, recoveryIndex = {}, nil, 1
+local loadTimer, recoveryTimer, notifyTimer, stateTimer
 local checkingLoads = false
 local lastProgress = 0
 local changedItems = {}
+local CacheItem
 
 local function NotifyLoaded(itemID)
   changedItems[itemID] = true
@@ -45,7 +49,46 @@ local function NotifyLoadStateChanged()
   end
 end
 
-local function CacheItem(itemID)
+local function CheckExhaustedItems()
+  recoveryTimer = nil
+  if not recoveryBatch then
+    recoveryBatch, recoveryItems = recoveryItems, {}
+    recoveryIndex = 1
+  end
+  local checked = 0
+  while recoveryIndex <= #recoveryBatch and checked < LOAD_BATCH_SIZE do
+    local itemID = recoveryBatch[recoveryIndex]
+    recoveryIndex = recoveryIndex + 1
+    checked = checked + 1
+    if exhaustedItems[itemID] then
+      CacheItem(itemID)
+      if exhaustedItems[itemID] then
+        table.insert(recoveryItems, itemID)
+      end
+    end
+  end
+  if recoveryIndex <= #recoveryBatch then
+    recoveryTimer = C_Timer.NewTimer(LOAD_BATCH_DELAY, CheckExhaustedItems)
+  else
+    recoveryBatch, recoveryIndex = nil, 1
+    if #recoveryItems > 0 then
+      recoveryTimer = C_Timer.NewTimer(RECOVERY_INTERVAL, CheckExhaustedItems)
+    end
+  end
+end
+
+local function QueueRecovery(itemID)
+  if exhaustedItems[itemID] then
+    return
+  end
+  exhaustedItems[itemID] = true
+  table.insert(recoveryItems, itemID)
+  if not recoveryTimer and not recoveryBatch then
+    recoveryTimer = C_Timer.NewTimer(RECOVERY_INTERVAL, CheckExhaustedItems)
+  end
+end
+
+CacheItem = function(itemID)
   local name, link, quality, _, _, _, _, maxStack, _, icon, sellPrice, classID, subclassID = GetItemInfo(itemID)
   if not name then
     return nil
@@ -62,6 +105,7 @@ local function CacheItem(itemID)
     maxStack = maxStack or 1,
   }
   itemCache[itemID] = cached
+  exhaustedItems[itemID] = nil
   if loadAttempts[itemID] then
     pendingLoads[itemID] = nil
     loadAttempts[itemID] = nil
@@ -126,6 +170,7 @@ CheckPendingLoads = function()
         RequestItem(itemID, entry.started)
       else
         pendingLoads[itemID] = nil
+        QueueRecovery(itemID)
         unavailable = true
       end
     end
