@@ -30,6 +30,8 @@ Open the window with `/atools`, or from the addon compartment on the minimap. At
 
 Select a row and click **Buy** (or double-click it). The addon runs a fresh search and offers the most profitable listing that is still worth buying, using your min profit. Click **Confirm Buy** to buy it, or **Skip** to see the next one. Commodities need two clicks, one to get the final price and one to confirm. Every purchase is a separate click, as Blizzard requires.
 
+For Deals, live offers also respect the discount and maximum buyout. Commodity results don't identify individual listings, so each commodity purchase is capped at the maximum buyout.
+
 Right-click a row, or use **Search in Auctionator**, to open the item in Auctionator's Shopping tab. In Crafting, **Shop Mats** searches Auctionator for every material that's cheapest on the AH, with the right quantities.
 
 ### Commands

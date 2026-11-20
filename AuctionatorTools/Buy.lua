@@ -11,6 +11,7 @@ local MAX_FAILURES = 3
 
 local request, candidates, offer
 local bought = {}
+local skipped = {}
 local timer
 
 local function StopTimer()
@@ -94,7 +95,7 @@ local function ProcessItemResults(itemKey)
   candidates = {}
   for index = 1, C_AuctionHouse.GetNumItemSearchResults(itemKey) do
     local info = C_AuctionHouse.GetItemSearchResultInfo(itemKey, index)
-    if info and not info.containsOwnerItem and not bought[info.auctionID] then
+    if info and not info.containsOwnerItem and not bought[info.auctionID] and not skipped[info.auctionID] then
       local price
       if request.mode == "bid" then
         if info.minBid and not IsPlayer(info.bidder) then
@@ -104,7 +105,9 @@ local function ProcessItemResults(itemKey)
         price = info.buyoutAmount
       end
       local qty = info.quantity or 1
-      if price and price > 0 and qty > 0 then
+      if price and price > 0 and qty > 0
+        and (not request.maxBuyout or (info.buyoutAmount and info.buyoutAmount > 0 and info.buyoutAmount <= request.maxBuyout))
+        and (not request.maxUnitPrice or price / qty <= request.maxUnitPrice) then
         local profitEach = request.unitValue - price / qty
         if profitEach >= request.minProfit then
           table.insert(candidates, { auctionID = info.auctionID, price = price, qty = qty, profit = profitEach })
@@ -120,10 +123,15 @@ end
 
 local function ProcessCommodityResults(itemID)
   local money = GetMoney()
+  if request.maxBuyout then
+    money = math.min(money, request.maxBuyout)
+  end
   local qty, total = 0, 0
   for index = 1, C_AuctionHouse.GetNumCommoditySearchResults(itemID) do
     local info = C_AuctionHouse.GetCommoditySearchResultInfo(itemID, index)
-    if not info or info.unitPrice > request.unitValue - request.minProfit then
+    if not info or not info.unitPrice or info.unitPrice <= 0
+      or info.unitPrice > request.unitValue - request.minProfit
+      or (request.maxUnitPrice and info.unitPrice > request.maxUnitPrice) then
       break
     end
     local available = info.quantity - (info.numOwnerItems or 0)
@@ -175,13 +183,14 @@ local function AttemptFailed(message)
   end
 end
 
--- request: { view, itemID, name, link, mode = "buyout"|"bid", unitValue, minProfit }
+-- request: { view, itemID, name, link, mode, unitValue, minProfit, maxBuyout, maxUnitPrice }
 function Buy.Start(newRequest)
   if not AT.ahOpen then
     Finish("Open the auction house to buy.")
     return
   end
   Buy.Cancel(true)
+  skipped = {}
   request = newRequest
   request.failures = 0
   request.commodity = request.mode ~= "bid" and AT.Data.IsCommodity(request.itemID)
@@ -216,7 +225,7 @@ end
 
 function Buy.Skip()
   if Buy.state == "offer" and candidates and not request.commodity then
-    bought[offer.auctionID] = true
+    skipped[offer.auctionID] = true
     ShowNextCandidate()
   else
     Buy.Cancel()
@@ -238,7 +247,9 @@ AT.OnEvent("COMMODITY_PRICE_UPDATED", function(unitPrice, totalPrice)
   end
   StopTimer()
   local profitEach = (request.unitValue * offer.qty - totalPrice) / offer.qty
-  if profitEach >= request.minProfit and totalPrice <= GetMoney() then
+  if profitEach >= request.minProfit and totalPrice <= GetMoney()
+    and (not request.maxBuyout or totalPrice <= request.maxBuyout)
+    and (not request.maxUnitPrice or totalPrice / offer.qty <= request.maxUnitPrice) then
     offer.price = totalPrice
     offer.profit = profitEach
     SetState("commodityConfirm", "Confirm: " .. Describe(offer.qty, totalPrice, profitEach))
@@ -268,6 +279,9 @@ end
 local function Failed()
   if Buy.state == "placing" then
     StopTimer()
+    if offer.auctionID then
+      bought[offer.auctionID] = nil
+    end
     AttemptFailed("The purchase failed.")
   end
 end
