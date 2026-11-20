@@ -281,11 +281,9 @@ Analysis.scanViews = { vendor = true, deals = true, disenchant = true }
 -- Builds a view in the background and passes (rows, meta) to onDone
 function Analysis.Run(view, onDone)
   AT.RunJob("analysis", function()
-    Data.loadingItems = false
-    Data.unavailableItems = false
+    Data.missingItems = 0
     local rows, meta = Builders[view](AT.db.views[view])
-    meta.loadingItems = Data.loadingItems
-    meta.unavailableItems = Data.unavailableItems
+    meta.missingItems = Data.missingItems
     return { rows = rows, meta = meta }
   end, function(result)
     onDone(result.rows, result.meta)
