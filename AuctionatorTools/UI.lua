@@ -503,6 +503,14 @@ local function ShowRowTooltip(rowFrame)
   else
     GameTooltip:SetText(row.name or "")
   end
+  local stats = row.itemID and Data.PriceStats(row.itemID)
+  if stats then
+    GameTooltip:AddLine(" ")
+    GameTooltip:AddLine(string.format("AH prices, last %d days (%d with data)", AT.db.historyDays, stats.days), 1, 0.82, 0)
+    GameTooltip:AddDoubleLine("Min", AT.FormatMoney(stats.min), 1, 1, 1, 1, 1, 1)
+    GameTooltip:AddDoubleLine("Max", AT.FormatMoney(stats.max), 1, 1, 1, 1, 1, 1)
+    GameTooltip:AddDoubleLine("Average", AT.FormatMoney(stats.avg), 1, 1, 1, 1, 1, 1)
+  end
   if row.reagents then
     GameTooltip:AddLine(" ")
     GameTooltip:AddLine(string.format("Makes %s per craft, sold to the %s", row.yield, row.soldTo == "ah" and "AH" or "vendor"), 1, 0.82, 0)
