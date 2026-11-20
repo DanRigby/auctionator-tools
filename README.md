@@ -24,7 +24,7 @@ Open the window with `/atools`, or from the addon compartment on the minimap. At
 - Set **Min profit** per view, for example `1c`, `50s` or `1g 25s` (the default is 1c).
 - Profit and **Min profit** are calculated per item, even when listings contain multiple items.
 - Type in the search box to filter by name.
-- Hover a row for the item tooltip and details, such as the material breakdown for a craft.
+- Hover a row for the item tooltip and details, such as the material breakdown for a craft. The tooltip also shows the item's min, max and average AH price over the last 14 days (including today) from Auctionator's history. The average is the mean daily low.
 
 ### Buying
 

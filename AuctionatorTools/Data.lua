@@ -137,8 +137,44 @@ function Data.MarketPrice(itemID)
   return result or nil
 end
 
+-- Lowest daily low, highest daily high and mean daily low, including today
+local statsCache = {}
+
+function Data.PriceStats(itemID)
+  local cached = statsCache[itemID]
+  if cached ~= nil then
+    return cached or nil
+  end
+  local result = false
+  local db = Auctionator.Database and Auctionator.Database.db
+  local entry = db and db[tostring(itemID)]
+  if entry and entry.h then
+    local today = math.floor((time() - Auctionator.Constants.SCAN_DAY_0) / 86400)
+    local lows, highs = entry.l or {}, entry.h
+    local minPrice, maxPrice, total, count
+    for day = today, today - AT.db.historyDays + 1, -1 do
+      local key = tostring(day)
+      local high = highs[day] or highs[key]
+      local low = lows[day] or lows[key] or high
+      high = high or low
+      if low then
+        count = (count or 0) + 1
+        total = (total or 0) + low
+        minPrice = math.min(minPrice or low, low)
+        maxPrice = math.max(maxPrice or high, high)
+      end
+    end
+    if count then
+      result = { min = minPrice, max = maxPrice, avg = math.floor(total / count + 0.5), days = count }
+    end
+  end
+  statsCache[itemID] = result
+  return result or nil
+end
+
 function Data.ClearPriceCache()
   wipe(marketCache)
+  wipe(statsCache)
 end
 
 -- Auction scans are produced by Auctionator; we only keep a reference
