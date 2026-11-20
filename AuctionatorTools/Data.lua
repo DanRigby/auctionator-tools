@@ -8,31 +8,92 @@ local GetItemInfo = (C_Item and C_Item.GetItemInfo) or GetItemInfo
 local RequestLoadItem = C_Item and C_Item.RequestLoadItemDataByID
 local SUMMARY_PREFERENCE_SECONDS = 15 * 60
 local MAX_LOAD_ATTEMPTS = 3
+local ITEM_LOAD_TIMEOUT = 5
+local MAX_PROGRESS_GRACE = 60
+local LOAD_BATCH_SIZE = 64
+local LOAD_BATCH_DELAY = 0.05
+local RECOVERY_INTERVAL = 30
 
 -- Static item info never changes, so it is cached for the session
 local itemCache = {}
 local loadAttempts = {}
 local pendingLoads = {}
+local loadQueue, queueHead, queueTail = {}, 1, 0
+local exhaustedItems = {}
+local recoveryItems, recoveryBatch, recoveryIndex = {}, nil, 1
+local loadTimer, recoveryTimer, notifyTimer, stateTimer
+local checkingLoads = false
+local lastProgress = 0
+local changedItems = {}
+local CacheItem
 
-Data.missingItems = 0
-
-function Data.Item(itemID)
-  local cached = itemCache[itemID]
-  if cached then
-    return cached
+local function NotifyLoaded(itemID)
+  changedItems[itemID] = true
+  -- A fixed batching window also flushes during a steady stream of arrivals.
+  if not notifyTimer then
+    notifyTimer = C_Timer.NewTimer(0.5, function()
+      notifyTimer = nil
+      local changed = changedItems
+      changedItems = {}
+      AT.Send("ItemDataLoaded", changed)
+    end)
   end
+end
+
+local function NotifyLoadStateChanged()
+  if not stateTimer then
+    stateTimer = C_Timer.NewTimer(0.5, function()
+      stateTimer = nil
+      AT.Send("ItemLoadStateChanged")
+    end)
+  end
+end
+
+local function CheckExhaustedItems()
+  recoveryTimer = nil
+  if not recoveryBatch then
+    recoveryBatch, recoveryItems = recoveryItems, {}
+    recoveryIndex = 1
+  end
+  local checked = 0
+  while recoveryIndex <= #recoveryBatch and checked < LOAD_BATCH_SIZE do
+    local itemID = recoveryBatch[recoveryIndex]
+    recoveryIndex = recoveryIndex + 1
+    checked = checked + 1
+    if exhaustedItems[itemID] then
+      CacheItem(itemID)
+      if exhaustedItems[itemID] then
+        table.insert(recoveryItems, itemID)
+      end
+    end
+  end
+  if recoveryIndex <= #recoveryBatch then
+    recoveryTimer = C_Timer.NewTimer(LOAD_BATCH_DELAY, CheckExhaustedItems)
+  else
+    recoveryBatch, recoveryIndex = nil, 1
+    if #recoveryItems > 0 then
+      recoveryTimer = C_Timer.NewTimer(RECOVERY_INTERVAL, CheckExhaustedItems)
+    end
+  end
+end
+
+local function QueueRecovery(itemID)
+  if exhaustedItems[itemID] then
+    return
+  end
+  exhaustedItems[itemID] = true
+  table.insert(recoveryItems, itemID)
+  if not recoveryTimer and not recoveryBatch then
+    recoveryTimer = C_Timer.NewTimer(RECOVERY_INTERVAL, CheckExhaustedItems)
+  end
+end
+
+CacheItem = function(itemID)
   local name, link, quality, _, _, _, _, maxStack, _, icon, sellPrice, classID, subclassID = GetItemInfo(itemID)
   if not name then
-    local attempts = loadAttempts[itemID] or 0
-    if attempts < MAX_LOAD_ATTEMPTS and not pendingLoads[itemID] and RequestLoadItem then
-      loadAttempts[itemID] = attempts + 1
-      pendingLoads[itemID] = true
-      RequestLoadItem(itemID)
-    end
-    Data.missingItems = Data.missingItems + 1
     return nil
   end
-  cached = {
+  local cached = {
     id = itemID,
     name = name,
     link = link,
@@ -44,20 +105,131 @@ function Data.Item(itemID)
     maxStack = maxStack or 1,
   }
   itemCache[itemID] = cached
+  exhaustedItems[itemID] = nil
+  if loadAttempts[itemID] then
+    pendingLoads[itemID] = nil
+    loadAttempts[itemID] = nil
+    lastProgress = GetTime()
+    NotifyLoaded(itemID)
+  end
   return cached
 end
 
-AT.OnEvent("ITEM_DATA_LOAD_RESULT", function(itemID)
-  if pendingLoads[itemID] then
-    pendingLoads[itemID] = nil
-    AT.Debounce("itemData", 0.5, function()
-      AT.Send("ItemDataLoaded")
-    end)
+local CheckPendingLoads
+
+local function ScheduleLoadCheck()
+  if not checkingLoads and not loadTimer and queueHead <= queueTail then
+    local delay = math.max(LOAD_BATCH_DELAY, loadQueue[queueHead].deadline - GetTime())
+    loadTimer = C_Timer.NewTimer(delay, CheckPendingLoads)
   end
-end)
+end
+
+local function QueueLoad(itemID, started)
+  local entry = { itemID = itemID, started = started, deadline = GetTime() + ITEM_LOAD_TIMEOUT }
+  pendingLoads[itemID] = entry
+  queueTail = queueTail + 1
+  loadQueue[queueTail] = entry
+  ScheduleLoadCheck()
+end
+
+local function RequestItem(itemID, started)
+  loadAttempts[itemID] = (loadAttempts[itemID] or 0) + 1
+  QueueLoad(itemID, started or GetTime())
+  if RequestLoadItem then
+    RequestLoadItem(itemID)
+  end
+end
+
+CheckPendingLoads = function()
+  loadTimer = nil
+  checkingLoads = true
+  local now = GetTime()
+  local batch = {}
+  for _ = 1, LOAD_BATCH_SIZE do
+    local entry = loadQueue[queueHead]
+    if not entry or entry.deadline > now then
+      break
+    end
+    loadQueue[queueHead] = nil
+    queueHead = queueHead + 1
+    local itemID = entry.itemID
+    if pendingLoads[itemID] == entry then
+      CacheItem(itemID)
+      table.insert(batch, entry)
+    end
+  end
+  local unavailable = false
+  local makingProgress = now - lastProgress < ITEM_LOAD_TIMEOUT
+  for _, entry in ipairs(batch) do
+    local itemID = entry.itemID
+    if pendingLoads[itemID] == entry then
+      -- Allow slow bulk loads to progress, but never postpone an item forever.
+      if makingProgress and now - entry.started < MAX_PROGRESS_GRACE then
+        QueueLoad(itemID, entry.started)
+      elseif loadAttempts[itemID] < MAX_LOAD_ATTEMPTS then
+        RequestItem(itemID, entry.started)
+      else
+        pendingLoads[itemID] = nil
+        QueueRecovery(itemID)
+        unavailable = true
+      end
+    end
+  end
+  if queueHead > queueTail then
+    queueHead, queueTail = 1, 0
+  end
+  checkingLoads = false
+  if unavailable then
+    NotifyLoadStateChanged()
+  end
+  ScheduleLoadCheck()
+end
+
+function Data.Item(itemID, missingItems)
+  local cached = itemCache[itemID]
+  if cached then
+    return cached
+  end
+  if missingItems and missingItems[itemID] then
+    return nil
+  end
+  cached = CacheItem(itemID)
+  if cached then
+    return cached
+  end
+  if missingItems then
+    missingItems[itemID] = true
+  end
+  if not pendingLoads[itemID] and (loadAttempts[itemID] or 0) < MAX_LOAD_ATTEMPTS then
+    RequestItem(itemID)
+  end
+  return nil
+end
+
+function Data.ItemLoadCounts(missingItems)
+  local loading, unavailable = 0, 0
+  for itemID in pairs(missingItems or {}) do
+    if not itemCache[itemID] then
+      if pendingLoads[itemID] then
+        loading = loading + 1
+      else
+        unavailable = unavailable + 1
+      end
+    end
+  end
+  return loading, unavailable
+end
+
+local function OnItemLoadResult(itemID, success)
+  if success ~= false and loadAttempts[itemID] then
+    CacheItem(itemID)
+  end
+end
+AT.OnEvent("ITEM_DATA_LOAD_RESULT", OnItemLoadResult)
+AT.OnEvent("GET_ITEM_INFO_RECEIVED", OnItemLoadResult)
 
 local commodityCache = {}
-function Data.IsCommodity(itemID)
+function Data.IsCommodity(itemID, missingItems)
   local cached = commodityCache[itemID]
   if cached ~= nil then
     return cached
@@ -72,7 +244,7 @@ function Data.IsCommodity(itemID)
     end
   end
   if result == nil then
-    local item = Data.Item(itemID)
+    local item = Data.Item(itemID, missingItems)
     if not item then
       return false
     end

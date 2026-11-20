@@ -41,7 +41,8 @@ Right-click a row, or use **Search in Auctionator**, to open the item in Auction
 
 ## Notes
 
-- The addon only does work while its window is open, and only for the view you're looking at. Large scans are processed in small chunks so the game doesn't stutter.
+- Opportunity analysis only runs while the window is open, and only for the view you're looking at. Large scans are processed in small chunks so the game doesn't stutter.
+- Item info loads asynchronously. Arrivals are batched into updates for affected views; failed loads are retried, then reported as unavailable rather than left loading indefinitely.
 - Summary-scan results only know the cheapest listing of each item, so quantities show as `1+`. Run a full scan for exact numbers.
 
 ## Development

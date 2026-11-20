@@ -20,10 +20,10 @@ local function AddListing(groups, itemID, qty, cost, unitValue, link)
   group.value = unitValue
 end
 
-local function FinishGroups(groups, approx)
+local function FinishGroups(groups, approx, missingItems)
   local rows = {}
   for itemID, group in pairs(groups) do
-    local item = Data.Item(itemID)
+    local item = Data.Item(itemID, missingItems)
     if item then
       group.name = item.name
       group.icon = item.icon
@@ -75,7 +75,7 @@ local function ScanMeta(kind, scan)
   return { source = kind, time = scan.time }
 end
 
-function Builders.vendor(settings)
+function Builders.vendor(settings, missingItems)
   local bidMode = settings.mode == "bid"
   local kind, scan = Data.GetScan(bidMode)
   if not scan then
@@ -86,21 +86,21 @@ function Builders.vendor(settings)
   ForEachListing("vendor", kind, scan, function(itemID, count, buyout, bid, link)
     local price = buyout
     if bidMode then price = bid end
-    if price and not (bidMode and Data.IsCommodity(itemID)) then
-      local item = Data.Item(itemID)
+    if price and not (bidMode and Data.IsCommodity(itemID, missingItems)) then
+      local item = Data.Item(itemID, missingItems)
       if item and item.sell > 0 and item.sell - price / count >= minProfit then
         AddListing(groups, itemID, count, price, item.sell, link)
       end
     end
   end)
-  local rows = FinishGroups(groups, kind == "summary")
+  local rows = FinishGroups(groups, kind == "summary", missingItems)
   for _, row in ipairs(rows) do
     row.buy = { mode = bidMode and "bid" or "buyout", unitValue = row.value }
   end
   return rows, ScanMeta(kind, scan)
 end
 
-function Builders.deals(settings)
+function Builders.deals(settings, missingItems)
   local bidMode = settings.mode == "bid"
   local kind, scan = Data.GetScan(bidMode)
   if not scan then
@@ -112,7 +112,7 @@ function Builders.deals(settings)
   local maxBuyout = settings.maxBuyout
   local groups = {}
   ForEachListing("deals", kind, scan, function(itemID, count, buyout, bid, link)
-    if buyout and buyout <= maxBuyout and not (bidMode and Data.IsCommodity(itemID)) then
+    if buyout and buyout <= maxBuyout and not (bidMode and Data.IsCommodity(itemID, missingItems)) then
       local price = buyout
       if bidMode then price = bid end
       local market = Data.MarketPrice(itemID)
@@ -125,7 +125,7 @@ function Builders.deals(settings)
       end
     end
   end)
-  local rows = FinishGroups(groups, kind == "summary")
+  local rows = FinishGroups(groups, kind == "summary", missingItems)
   for _, row in ipairs(rows) do
     row.discount = 1 - row.unit / row.market
     row.buy = { mode = bidMode and "bid" or "buyout", unitValue = row.value }
@@ -136,7 +136,7 @@ end
 local ARMOR = (Enum.ItemClass and Enum.ItemClass.Armor) or 4
 local WEAPON = (Enum.ItemClass and Enum.ItemClass.Weapon) or 2
 
-function Builders.disenchant(settings)
+function Builders.disenchant(settings, missingItems)
   local kind, scan = Data.GetScan(false)
   if not scan then
     return {}, { noData = true }
@@ -150,7 +150,7 @@ function Builders.disenchant(settings)
       local value = values[itemID]
       if value == nil then
         value = false
-        local item = Data.Item(itemID)
+        local item = Data.Item(itemID, missingItems)
         if item and (item.classID == ARMOR or item.classID == WEAPON) and item.quality >= 2 and item.quality <= 4 then
           local disenchant = Data.DisenchantValue(itemID)
           if disenchant and disenchant > 0 then
@@ -164,7 +164,7 @@ function Builders.disenchant(settings)
       end
     end
   end)
-  local rows = FinishGroups(groups, kind == "summary")
+  local rows = FinishGroups(groups, kind == "summary", missingItems)
   for _, row in ipairs(rows) do
     row.buy = { mode = "buyout", unitValue = row.value }
   end
@@ -187,7 +187,7 @@ local function MaterialPrice(itemID)
   return ah, ah and "ah" or nil
 end
 
-function Builders.crafting(settings)
+function Builders.crafting(settings, missingItems)
   local professions = AT.char.professions
   if next(professions) == nil then
     return {}, { noProfessions = true }
@@ -200,7 +200,7 @@ function Builders.crafting(settings)
     for recipeID, recipe in pairs(profession.recipes) do
       count = count + 1
       AT.MaybeYield(count)
-      local output = Data.Item(recipe.out)
+      local output = Data.Item(recipe.out, missingItems)
       if output then
         local cost, complete, reagents = 0, true, {}
         for _, reagent in ipairs(recipe.reagents) do
@@ -243,7 +243,7 @@ function Builders.crafting(settings)
   return rows, {}
 end
 
-function Builders.resale(settings)
+function Builders.resale(settings, missingItems)
   local prices = AT.db.vendorPrices
   if next(prices) == nil then
     return {}, { noVendors = true }
@@ -259,7 +259,7 @@ function Builders.resale(settings)
     if ah then
       local profit = ah * cut - entry.u
       if profit >= minProfit then
-        local item = Data.Item(itemID)
+        local item = Data.Item(itemID, missingItems)
         if item then
           table.insert(rows, {
             id = itemID,
@@ -286,12 +286,13 @@ Analysis.scanViews = { vendor = true, deals = true, disenchant = true }
 
 -- Builds a view in the background and passes (rows, meta) to onDone
 function Analysis.Run(view, onDone)
+  local missingItems = {}
   AT.RunJob("analysis", function()
-    Data.missingItems = 0
-    local rows, meta = Builders[view](AT.db.views[view])
-    meta.missingItems = Data.missingItems
+    local rows, meta = Builders[view](AT.db.views[view], missingItems)
+    meta.missingItems = missingItems
     return { rows = rows, meta = meta }
   end, function(result)
     onDone(result.rows, result.meta)
   end)
+  return missingItems
 end
