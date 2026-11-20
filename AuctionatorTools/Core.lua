@@ -10,7 +10,7 @@ local DEFAULTS = {
   activeView = "vendor",
   views = {
     vendor = { minProfit = 1, mode = "buyout", sortKey = "profit", sortAsc = false },
-    deals = { minProfit = 1, discount = 30, sortKey = "profit", sortAsc = false },
+    deals = { minProfit = 1, discount = 30, maxBuyout = 50000, sortKey = "profit", sortAsc = false },
     crafting = { minProfit = 1, sortKey = "profit", sortAsc = false },
     disenchant = { minProfit = 1, sortKey = "profit", sortAsc = false },
     resale = { minProfit = 1, sortKey = "profit", sortAsc = false },
