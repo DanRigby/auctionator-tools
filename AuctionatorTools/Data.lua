@@ -9,12 +9,17 @@ local RequestLoadItem = C_Item and C_Item.RequestLoadItemDataByID
 local SUMMARY_PREFERENCE_SECONDS = 15 * 60
 local MAX_LOAD_ATTEMPTS = 3
 local ITEM_LOAD_TIMEOUT = 5
+local MAX_PROGRESS_GRACE = 60
+local LOAD_BATCH_SIZE = 64
+local LOAD_BATCH_DELAY = 0.05
 
 -- Static item info never changes, so it is cached for the session
 local itemCache = {}
 local loadAttempts = {}
 local pendingLoads = {}
-local loadTimer, notifyTimer
+local loadQueue, queueHead, queueTail = {}, 1, 0
+local loadTimer, notifyTimer, stateTimer
+local checkingLoads = false
 local lastProgress = 0
 local changedItems = {}
 
@@ -27,6 +32,15 @@ local function NotifyLoaded(itemID)
       local changed = changedItems
       changedItems = {}
       AT.Send("ItemDataLoaded", changed)
+    end)
+  end
+end
+
+local function NotifyLoadStateChanged()
+  if not stateTimer then
+    stateTimer = C_Timer.NewTimer(0.5, function()
+      stateTimer = nil
+      AT.Send("ItemLoadStateChanged")
     end)
   end
 end
@@ -60,18 +74,23 @@ end
 local CheckPendingLoads
 
 local function ScheduleLoadCheck()
-  if not loadTimer and next(pendingLoads) then
-    loadTimer = C_Timer.NewTimer(ITEM_LOAD_TIMEOUT, CheckPendingLoads)
+  if not checkingLoads and not loadTimer and queueHead <= queueTail then
+    local delay = math.max(LOAD_BATCH_DELAY, loadQueue[queueHead].deadline - GetTime())
+    loadTimer = C_Timer.NewTimer(delay, CheckPendingLoads)
   end
 end
 
-local function RequestItem(itemID)
-  if not next(pendingLoads) then
-    lastProgress = GetTime()
-  end
-  loadAttempts[itemID] = (loadAttempts[itemID] or 0) + 1
-  pendingLoads[itemID] = GetTime() + ITEM_LOAD_TIMEOUT
+local function QueueLoad(itemID, started)
+  local entry = { itemID = itemID, started = started, deadline = GetTime() + ITEM_LOAD_TIMEOUT }
+  pendingLoads[itemID] = entry
+  queueTail = queueTail + 1
+  loadQueue[queueTail] = entry
   ScheduleLoadCheck()
+end
+
+local function RequestItem(itemID, started)
+  loadAttempts[itemID] = (loadAttempts[itemID] or 0) + 1
+  QueueLoad(itemID, started or GetTime())
   if RequestLoadItem then
     RequestLoadItem(itemID)
   end
@@ -79,31 +98,44 @@ end
 
 CheckPendingLoads = function()
   loadTimer = nil
+  checkingLoads = true
   local now = GetTime()
-  if now - lastProgress >= ITEM_LOAD_TIMEOUT then
-    for itemID, deadline in pairs(pendingLoads) do
-      if deadline <= now then
-        CacheItem(itemID)
+  local batch = {}
+  for _ = 1, LOAD_BATCH_SIZE do
+    local entry = loadQueue[queueHead]
+    if not entry or entry.deadline > now then
+      break
+    end
+    loadQueue[queueHead] = nil
+    queueHead = queueHead + 1
+    local itemID = entry.itemID
+    if pendingLoads[itemID] == entry then
+      CacheItem(itemID)
+      table.insert(batch, entry)
+    end
+  end
+  local unavailable = false
+  local makingProgress = now - lastProgress < ITEM_LOAD_TIMEOUT
+  for _, entry in ipairs(batch) do
+    local itemID = entry.itemID
+    if pendingLoads[itemID] == entry then
+      -- Allow slow bulk loads to progress, but never postpone an item forever.
+      if makingProgress and now - entry.started < MAX_PROGRESS_GRACE then
+        QueueLoad(itemID, entry.started)
+      elseif loadAttempts[itemID] < MAX_LOAD_ATTEMPTS then
+        RequestItem(itemID, entry.started)
+      else
+        pendingLoads[itemID] = nil
+        unavailable = true
       end
     end
-    -- Bulk item requests can be queued by the client; don't retry while they
-    -- are still making progress.
-    if now - lastProgress >= ITEM_LOAD_TIMEOUT then
-      local unavailable = false
-      for itemID, deadline in pairs(pendingLoads) do
-        if deadline <= now then
-          if loadAttempts[itemID] < MAX_LOAD_ATTEMPTS then
-            RequestItem(itemID)
-          else
-            pendingLoads[itemID] = nil
-            unavailable = true
-          end
-        end
-      end
-      if unavailable then
-        AT.Send("ItemLoadStateChanged")
-      end
-    end
+  end
+  if queueHead > queueTail then
+    queueHead, queueTail = 1, 0
+  end
+  checkingLoads = false
+  if unavailable then
+    NotifyLoadStateChanged()
   end
   ScheduleLoadCheck()
 end

@@ -1,10 +1,12 @@
 -- Run from the repository root with Lua 5.1 or later.
 local function harness(legacy)
-  local h = { available = { [2] = true }, reads = {}, requests = {}, messages = {}, events = {} }
+  local h = { available = { [2] = true }, reads = {}, requests = {}, messages = {}, events = {},
+    totalReads = 0, totalRequests = 0, maxTimerReads = 0, maxTimerRequests = 0 }
   local now, timers = 0, {}
   function GetTime() return now end
   function time() return 100 * 86400 end
   local function itemInfo(id)
+    h.totalReads = h.totalReads + 1
     h.reads[id] = (h.reads[id] or 0) + 1
     if h.available[id] then
       return "Item " .. id, "item:" .. id, 2, 1, 1, nil, nil, 1, nil, nil, 1000, 4, 0
@@ -13,7 +15,11 @@ local function harness(legacy)
   GetItemInfo = itemInfo
   C_Item = not legacy and {
     GetItemInfo = itemInfo,
-    RequestLoadItemDataByID = function(id) h.requests[id] = (h.requests[id] or 0) + 1 end,
+    RequestLoadItemDataByID = function(id)
+      h.totalRequests = h.totalRequests + 1
+      h.requests[id] = (h.requests[id] or 0) + 1
+      if h.onRequest then h.onRequest(id) end
+    end,
   } or nil
   C_Timer = {
     NewTimer = function(delay, callback)
@@ -35,7 +41,10 @@ local function harness(legacy)
       if not first then break end
       local timer = table.remove(timers, first)
       now = timer.at
+      local reads, requests = h.totalReads, h.totalRequests
       timer.callback()
+      h.maxTimerReads = math.max(h.maxTimerReads, h.totalReads - reads)
+      h.maxTimerRequests = math.max(h.maxTimerRequests, h.totalRequests - requests)
     end
     now = target
   end
@@ -181,6 +190,94 @@ h.counts(missing, 1, 0)
 assert(h.requests[17] == 1, "slow bulk loads must not retry while successful arrivals continue")
 h.advance(20)
 h.counts(missing, 0, 1)
+
+h = harness()
+missing = {}
+for _, id in ipairs({ 1, 10, 11, 12 }) do h.AT.Data.Item(id, missing) end
+for id = 10, 12 do
+  h.available[id] = true
+  h.advance(5)
+end
+h.counts(missing, 1, 0)
+assert(h.requests[1] == 1, "silent successes later in the batch must defer retries of earlier misses")
+h.advance(20)
+h.counts(missing, 0, 1)
+
+h = harness()
+missing = {}
+h.AT.Data.Item(1, missing)
+for id = 1000, 1024 do
+  h.advance(4)
+  h.AT.Data.Item(id, missing)
+  h.available[id] = true
+  h.events.ITEM_DATA_LOAD_RESULT(id, true)
+end
+h.counts(missing, 0, 1)
+assert(h.requests[1] == 3, "continuous unrelated successes must not indefinitely postpone retries")
+
+h = harness()
+missing = {}
+for id = 1000, 5999 do h.AT.Data.Item(id, missing) end
+h.advance(30)
+h.counts(missing, 0, 5000)
+assert(h.requests[1000] == 3 and h.requests[5999] == 3,
+  "every item in a large backlog must be retried and eventually exhausted")
+assert(h.maxTimerReads <= 64 and h.maxTimerRequests <= 64,
+  "timeout callbacks must bound item lookups and retry requests")
+
+h = harness()
+missing = {}
+for id = 1000, 1499 do
+  h.AT.Data.Item(id, missing)
+  h.available[id] = true
+  h.events.ITEM_DATA_LOAD_RESULT(id, true)
+end
+h.AT.Data.Item(1, missing)
+h.advance(20)
+h.counts(missing, 0, 1)
+assert(h.requests[1] == 3, "completed queue entries must not block later pending items")
+assert(h.requests[1000] == 1, "completed queue entries must not be retried")
+
+h = harness()
+missing = {}
+for id = 1000, 1063 do
+  h.AT.Data.Item(id, missing)
+  h.available[id] = true
+  h.events.ITEM_DATA_LOAD_RESULT(id, true)
+end
+h.AT.Data.Item(1, missing)
+h.advance(5)
+assert(h.requests[1] == 1 and h.reads[1] == 1,
+  "stale entries must count toward the per-callback batch limit")
+h.advance(0.05)
+assert(h.requests[1] == 2, "remaining work must run in a later timer callback")
+
+h = harness()
+missing = {}
+h.onRequest = function(id)
+  h.available[id] = true
+  h.events.ITEM_DATA_LOAD_RESULT(id, true)
+end
+h.AT.Data.Item(1, missing)
+h.advance(20)
+h.counts(missing, 0, 0)
+assert(h.requests[1] == 1 and h.count("ItemDataLoaded") == 1,
+  "a synchronous load event must clear the pending request without retrying")
+
+h = harness()
+missing = {}
+for id = 1000, 1063 do h.AT.Data.Item(id, missing) end
+h.onRequest = function(id)
+  h.available[id] = true
+  h.events.ITEM_DATA_LOAD_RESULT(id, true)
+  h.events.GET_ITEM_INFO_RECEIVED(id, true)
+end
+h.advance(5.5)
+h.counts(missing, 0, 0)
+assert(h.requests[1000] == 2 and h.requests[1063] == 2 and h.count("ItemDataLoaded") == 1,
+  "synchronous retry successes must not duplicate requests or notifications")
+assert(h.maxTimerReads <= 128 and h.maxTimerRequests <= 64,
+  "synchronous retry events must still process only one bounded batch")
 
 h = harness()
 missing = {}
