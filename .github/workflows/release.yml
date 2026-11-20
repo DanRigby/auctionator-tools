@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (for example, 1.2.3 or v1.2.3)"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -15,6 +21,28 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+      - name: Determine release tag
+        id: release
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            if [[ "$REF_TYPE" != "branch" ]]; then
+              echo "::error::Manual releases must run from a branch."
+              exit 1
+            fi
+            TAG="v${VERSION#v}"
+            if [[ ! "$TAG" =~ ^v[0-9][0-9A-Za-z.+_-]*$ ]] || ! git check-ref-format "refs/tags/$TAG"; then
+              echo "::error::Invalid version: use a version beginning with a number, optionally prefixed with v."
+              exit 1
+            fi
+          else
+            TAG="$REF_NAME"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
       - name: Install Lua 5.1
         run: |
           sudo apt-get update
@@ -23,12 +51,18 @@ jobs:
         run: make check
       - name: Package addon
         env:
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ steps.release.outputs.tag }}
         run: zip -r "AuctionatorTools-${TAG}-forever.zip" AuctionatorTools/
+      - name: Create tag
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+        run: gh api "repos/$GITHUB_REPOSITORY/git/refs" -f "ref=refs/tags/$TAG" -f "sha=$GITHUB_SHA" --silent
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ steps.release.outputs.tag }}
         run: |
           gh release create "$TAG" \
             "AuctionatorTools-${TAG}-forever.zip" \

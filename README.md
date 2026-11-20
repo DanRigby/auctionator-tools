@@ -59,5 +59,8 @@ CI runs the same command.
 ### Releases
 
 Push a version tag such as `v0.1.0` to run the checks and publish a GitHub Release
-with generated release notes. The attached `AuctionatorTools-<tag>-forever.zip`
+with generated release notes. Alternatively, run the Release workflow manually
+from a branch and enter a version such as `0.1.0` or `v0.1.0`. After the checks
+pass, it creates a new tag at the selected branch's workflow commit; the tag
+must not already exist. The attached `AuctionatorTools-<tag>-forever.zip`
 contains only the `AuctionatorTools/` folder, ready to extract into `AddOns`.
