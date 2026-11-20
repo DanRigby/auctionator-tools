@@ -15,7 +15,7 @@ Open the window with `/atools`, or from the addon compartment on the minimap. At
 | View | What it shows |
 | --- | --- |
 | **Below Vendor** | Listings you can buy and sell to a vendor for more. Use the toggle to compare buyouts or bids (bids need a full scan). |
-| **Deals** | Listings at least *N*% (default 30%) below the item's typical price. Typical price is the median daily low over the last 14 days of Auctionator history, excluding today, with at least 3 days required. Profit includes the 5% AH cut. |
+| **Deals** | Affordable listings at least *N*% (default 30%) below the item's typical price. Grouped listings for an item are limited to your current money. Typical price is the median daily low over the last 14 days of Auctionator history, excluding today, with at least 3 days required. Profit includes the 5% AH cut. |
 | **Disenchant** | Green, blue and purple gear selling for less than the expected value of its disenchanted materials (from Auctionator). |
 | **Crafting** | Your learned recipes whose product sells for more than its materials cost. Each material uses the cheaper of the AH price and any known vendor price. Open each profession window once so your recipes are recorded. |
 | **Vendor Resale** | Items sold by vendors you've visited that sell for more on the AH. |
