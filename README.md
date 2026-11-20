@@ -47,8 +47,18 @@ Right-click a row, or use **Search in Auctionator**, to open the item in Auction
 
 ## Development
 
-Run the tests from the repository root with Lua 5.1:
+Install Make and Lua 5.1 (including `luac5.1`), then check Lua syntax and run all
+tests from the repository root:
 
 ```sh
-for file in tests/*.lua; do lua5.1 "$file" || exit 1; done
+make check
 ```
+
+CI runs the same command.
+
+### Releases
+
+Push a version tag such as `v0.1.0` to run the checks and publish a GitHub Release
+with generated release notes. The attached `AuctionatorTools-<tag>-forever.zip`
+contains only the `AuctionatorTools/` folder, ready to extract into `AddOns`.
+The `-forever.zip` suffix is required for WoWUP to recognize the Forever client.
